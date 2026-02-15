@@ -1348,15 +1348,19 @@ class DoclingParser(Parser):
 
             base_output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Run docling command
-            self._run_docling_command(
+            # Run docling command or SDK
+            content_list = self._run_docling_command(
                 input_path=pdf_path,
                 output_dir=base_output_dir,
                 file_stem=name_without_suff,
                 **kwargs,
             )
 
-            # Read the generated output files
+            # If SDK returned content_list directly, return it
+            if content_list is not None:
+                return content_list
+
+            # Read the generated output files (for CLI fallback)
             content_list, _ = self._read_output_files(
                 base_output_dir, name_without_suff
             )
@@ -1382,7 +1386,7 @@ class DoclingParser(Parser):
             method: Parsing method
             output_dir: Output directory path
             lang: Document language for optimization
-            **kwargs: Additional parameters for docling command
+            **kwargs: Additional parameters for docling command (e.g., use_sdk, env)
 
         Returns:
             List[Dict[str, Any]]: List of content blocks
@@ -1415,20 +1419,75 @@ class DoclingParser(Parser):
         output_dir: Union[str, Path],
         file_stem: str,
         **kwargs,
-    ) -> None:
+    ) -> Optional[List[Dict[str, Any]]]:
         """
-        Run docling command line tool
+        Execute docling parsing via CLI or SDK.
 
         Args:
             input_path: Path to input file or directory
             output_dir: Output directory path
-            file_stem: File stem for creating subdirectory
-            **kwargs: Additional parameters for docling command
+            file_stem: File stem for output filenames
+            **kwargs: Additional parameters including:
+                - use_sdk (bool): Use docling SDK directly via import. It is faster
+                  by keeping the model in memory and avoiding repetitive CLI overhead.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: content_list if SDK succeeds, else None.
         """
         # Create subdirectory structure similar to MinerU
         file_output_dir = Path(output_dir) / file_stem / "docling"
         file_output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Check if SDK mode is requested
+        use_sdk = kwargs.get("use_sdk", False)
+        if use_sdk:
+            try:
+                from docling.document_converter import DocumentConverter
+
+                self.logger.info(f"Using Docling SDK to parse: {input_path}")
+                converter = DocumentConverter()
+                result = converter.convert(str(input_path))
+
+                # Prepare output paths
+                json_file = file_output_dir / f"{file_stem}.json"
+                md_file = file_output_dir / f"{file_stem}.md"
+
+                # Export to dict and markdown string
+                doc_dict = result.document.export_to_dict()
+                md_text = result.document.export_to_markdown()
+
+                # ALWAYS save results to disk for consistency and debugging
+                with open(json_file, "w", encoding="utf-8") as f:
+                    json.dump(doc_dict, f)
+
+                with open(md_file, "w", encoding="utf-8") as f:
+                    f.write(md_text)
+
+                # Optimized Path: Convert directly in memory from the dict we already have
+                content_list = self.read_from_block_recursive(
+                    doc_dict["body"],
+                    "body",
+                    file_output_dir,
+                    0,
+                    "0",
+                    doc_dict,
+                )
+
+                self.logger.info(
+                    "Docling SDK parsing, file export, and memory conversion completed"
+                )
+                return content_list  # Return the list directly to caller
+
+            except ImportError:
+                self.logger.warning(
+                    "Docling SDK not found. Falling back to CLI mode."
+                )
+            except Exception as e:
+                self.logger.error(
+                    f"Docling SDK parsing failed: {e}. Falling back to CLI mode."
+                )
+
+        # CLI Fallback Mode
         cmd = [
             "docling",
             "--output",
@@ -1477,6 +1536,8 @@ class DoclingParser(Parser):
             raise RuntimeError(
                 "docling command not found. Please ensure Docling is properly installed."
             )
+
+        return None  # Signal that files were written by CLI and need to be read from disk
 
     def _read_output_files(
         self,
@@ -1666,15 +1727,19 @@ class DoclingParser(Parser):
 
             base_output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Run docling command
-            self._run_docling_command(
+            # Run docling command or SDK
+            content_list = self._run_docling_command(
                 input_path=doc_path,
                 output_dir=base_output_dir,
                 file_stem=name_without_suff,
                 **kwargs,
             )
 
-            # Read the generated output files
+            # If SDK returned content_list directly, return it
+            if content_list is not None:
+                return content_list
+
+            # Read the generated output files (for CLI fallback)
             content_list, _ = self._read_output_files(
                 base_output_dir, name_without_suff
             )
@@ -1700,7 +1765,7 @@ class DoclingParser(Parser):
             html_path: Path to the HTML file
             output_dir: Output directory path
             lang: Document language for optimization
-            **kwargs: Additional parameters for docling command
+            **kwargs: Additional parameters for docling command (e.g., use_sdk, env)
 
         Returns:
             List[Dict[str, Any]]: List of content blocks
@@ -1724,15 +1789,19 @@ class DoclingParser(Parser):
 
             base_output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Run docling command
-            self._run_docling_command(
+            # Run docling command or SDK
+            content_list = self._run_docling_command(
                 input_path=html_path,
                 output_dir=base_output_dir,
                 file_stem=name_without_suff,
                 **kwargs,
             )
 
-            # Read the generated output files
+            # If SDK returned content_list directly, return it
+            if content_list is not None:
+                return content_list
+
+            # Read the generated output files (for CLI fallback)
             content_list, _ = self._read_output_files(
                 base_output_dir, name_without_suff
             )
