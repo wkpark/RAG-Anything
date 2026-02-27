@@ -12,6 +12,8 @@ For Office documents (.doc, .docx, .ppt, .pptx), please convert them to PDF form
 from __future__ import annotations
 
 
+import os
+import hashlib
 import json
 import argparse
 import base64
@@ -62,6 +64,28 @@ class Parser:
     def __init__(self) -> None:
         """Initialize the base parser."""
         pass
+
+    @staticmethod
+    def _unique_output_dir(
+        base_dir: Union[str, Path], file_path: Union[str, Path]
+    ) -> Path:
+        """Create a unique output subdirectory for a file to prevent same-name collisions.
+
+        When multiple files share the same name (e.g. dir1/paper.pdf and dir2/paper.pdf),
+        their parser output would collide in the same output directory. This creates a
+        unique subdirectory by appending a short hash of the file's absolute path. (Fixes #51)
+
+        Args:
+            base_dir: The base output directory
+            file_path: Path to the input file
+
+        Returns:
+            Path like base_dir/paper_a1b2c3d4/ unique per absolute file path.
+        """
+        file_path = Path(file_path).resolve()
+        stem = file_path.stem
+        path_hash = hashlib.md5(str(file_path).encode()).hexdigest()[:8]
+        return Path(base_dir) / f"{stem}_{path_hash}"
 
     @classmethod
     def convert_office_to_pdf(
@@ -604,6 +628,7 @@ class MineruParser(Parser):
         device: Optional[str] = None,
         source: Optional[str] = None,
         vlm_url: Optional[str] = None,
+        **kwargs,
     ) -> None:
         """
         Run mineru command line tool
@@ -621,6 +646,7 @@ class MineruParser(Parser):
             device: Inference device
             source: Model source
             vlm_url: When the backend is `vlm-http-client`, you need to specify the server_url
+            **kwargs: Additional parameters for subprocess (e.g., env)
         """
         cmd = [
             "mineru",
@@ -654,6 +680,26 @@ class MineruParser(Parser):
         output_lines = []
         error_lines = []
 
+        # Handle and validate environment variables
+        custom_env = kwargs.pop("env", None)
+
+        # Validate env if provided
+        if custom_env is not None:
+            if not isinstance(custom_env, dict):
+                raise TypeError(
+                    f"env must be a dictionary, got {type(custom_env).__name__}"
+                )
+            for k, v in custom_env.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise TypeError("env keys and values must be strings")
+
+        # Check for unsupported arguments to fail fast
+        if kwargs:
+            unsupported = ", ".join(kwargs.keys())
+            raise TypeError(
+                f"MineruParser._run_mineru_command received unexpected keyword argument(s): {unsupported}"
+            )
+
         try:
             # Prepare subprocess parameters to hide console window on Windows
             import platform
@@ -663,6 +709,11 @@ class MineruParser(Parser):
             # Log the command being executed
             cls.logger.info(f"Executing mineru command: {' '.join(cmd)}")
 
+            env = None
+            if custom_env:
+                env = os.environ.copy()
+                env.update(custom_env)
+
             subprocess_kwargs = {
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
@@ -670,6 +721,7 @@ class MineruParser(Parser):
                 "encoding": "utf-8",
                 "errors": "ignore",
                 "bufsize": 1,  # Line buffered
+                "env": env,
             }
 
             # Hide console window on Windows
@@ -938,9 +990,10 @@ class MineruParser(Parser):
 
             name_without_suff = pdf_path.stem
 
-            # Prepare output directory
+            # Prepare output directory — use unique subdirectory to prevent
+            # same-name file collisions when output_dir is shared (#51)
             if output_dir:
-                base_output_dir = Path(output_dir)
+                base_output_dir = self._unique_output_dir(output_dir, pdf_path)
             else:
                 base_output_dir = pdf_path.parent / "mineru_output"
 
@@ -1091,9 +1144,10 @@ class MineruParser(Parser):
 
             name_without_suff = image_path.stem
 
-            # Prepare output directory
+            # Prepare output directory — use unique subdirectory to prevent
+            # same-name file collisions when output_dir is shared (#51)
             if output_dir:
-                base_output_dir = Path(output_dir)
+                base_output_dir = self._unique_output_dir(output_dir, image_path)
             else:
                 base_output_dir = image_path.parent / "mineru_output"
 
@@ -1330,9 +1384,10 @@ class DoclingParser(Parser):
 
             name_without_suff = pdf_path.stem
 
-            # Prepare output directory
+            # Prepare output directory — use unique subdirectory to prevent
+            # same-name file collisions when output_dir is shared (#51)
             if output_dir:
-                base_output_dir = Path(output_dir)
+                base_output_dir = self._unique_output_dir(output_dir, pdf_path)
             else:
                 base_output_dir = pdf_path.parent / "docling_output"
 
@@ -1430,9 +1485,27 @@ class DoclingParser(Parser):
             str(input_path),
         ]
 
+        # Handle and validate environment variables
+        custom_env = kwargs.pop("env", None)
+
+        # Validate env if provided
+        if custom_env is not None:
+            if not isinstance(custom_env, dict):
+                raise TypeError(
+                    f"env must be a dictionary, got {type(custom_env).__name__}"
+                )
+            for k, v in custom_env.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise TypeError("env keys and values must be strings")
+
         try:
             # Prepare subprocess parameters to hide console window on Windows
             import platform
+
+            env = None
+            if custom_env:
+                env = os.environ.copy()
+                env.update(custom_env)
 
             docling_subprocess_kwargs = {
                 "capture_output": True,
@@ -1440,6 +1513,7 @@ class DoclingParser(Parser):
                 "check": True,
                 "encoding": "utf-8",
                 "errors": "ignore",
+                "env": env,
             }
 
             # Hide console window on Windows
@@ -1640,9 +1714,10 @@ class DoclingParser(Parser):
 
             name_without_suff = doc_path.stem
 
-            # Prepare output directory
+            # Prepare output directory — use unique subdirectory to prevent
+            # same-name file collisions when output_dir is shared (#51)
             if output_dir:
-                base_output_dir = Path(output_dir)
+                base_output_dir = self._unique_output_dir(output_dir, doc_path)
             else:
                 base_output_dir = doc_path.parent / "docling_output"
 
@@ -1698,9 +1773,10 @@ class DoclingParser(Parser):
 
             name_without_suff = html_path.stem
 
-            # Prepare output directory
+            # Prepare output directory — use unique subdirectory to prevent
+            # same-name file collisions when output_dir is shared (#51)
             if output_dir:
-                base_output_dir = Path(output_dir)
+                base_output_dir = self._unique_output_dir(output_dir, html_path)
             else:
                 base_output_dir = html_path.parent / "docling_output"
 
